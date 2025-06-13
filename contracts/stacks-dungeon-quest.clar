@@ -291,3 +291,91 @@
         (ok true)
     )
 )
+
+;; READ-ONLY FUNCTIONS
+
+;; Get comprehensive player statistics
+(define-read-only (get-player-stats (player principal))
+    (ok (default-to 
+        {
+            last-dungeon-block: u0,
+            last-entry-block: u0,
+            total-dungeons-completed: u0, 
+            total-rewards-earned: u0,
+            is-in-dungeon: false,
+            consecutive-completions: u0,
+            highest-streak: u0
+        }
+        (map-get? player-dungeon-stats { player: player })
+    ))
+)
+
+;; Check if player can enter dungeon with detailed status
+(define-read-only (can-enter-dungeon (player principal))
+    (let
+        (
+            (current-block (get-current-block))
+            (player-stats (default-to 
+                {
+                    last-dungeon-block: u0,
+                    last-entry-block: u0,
+                    total-dungeons-completed: u0, 
+                    total-rewards-earned: u0,
+                    is-in-dungeon: false,
+                    consecutive-completions: u0,
+                    highest-streak: u0
+                } 
+                (map-get? player-dungeon-stats { player: player })
+            ))
+            (cooldown-remaining (if (> (+ (get last-entry-block player-stats) DUNGEON-COOLDOWN-BLOCKS) current-block)
+                                   (- (+ (get last-entry-block player-stats) DUNGEON-COOLDOWN-BLOCKS) current-block)
+                                   u0))
+        )
+        (ok {
+            can-enter: (and
+                (var-get game-active)
+                (not (get is-in-dungeon player-stats))
+                (< (get total-dungeons-completed player-stats) MAX-DUNGEONS-PER-PLAYER)
+                (>= current-block 
+                    (+ (get last-entry-block player-stats) DUNGEON-COOLDOWN-BLOCKS))
+            ),
+            cooldown-remaining: cooldown-remaining,
+            dungeons-remaining: (- MAX-DUNGEONS-PER-PLAYER (get total-dungeons-completed player-stats))
+        })
+    )
+)
+
+;; Get global game statistics
+(define-read-only (get-game-stats (stat-type (string-ascii 20)))
+    (ok (default-to u0 
+        (get value (map-get? game-stats { stat-type: stat-type }))
+    ))
+)
+
+;; Get all game statistics at once
+(define-read-only (get-all-game-stats)
+    (ok {
+        total-entries: (default-to u0 (get value (map-get? game-stats { stat-type: "total-entries" }))),
+        total-completions: (default-to u0 (get value (map-get? game-stats { stat-type: "total-completions" }))),
+        total-forfeits: (default-to u0 (get value (map-get? game-stats { stat-type: "total-forfeits" }))),
+        rewards-distributed: (default-to u0 (get value (map-get? game-stats { stat-type: "rewards-distributed" }))),
+        fees-collected: (default-to u0 (get value (map-get? game-stats { stat-type: "fees-collected" }))),
+        total-dungeons-created: (var-get total-dungeons-created),
+        contract-treasury: (var-get contract-treasury)
+    })
+)
+
+;; Get contract configuration
+(define-read-only (get-game-config)
+    (ok {
+        entry-cost: ENTRY-COST,
+        reward-amount: REWARD-AMOUNT,
+        cooldown-blocks: DUNGEON-COOLDOWN-BLOCKS,
+        max-dungeons-per-player: MAX-DUNGEONS-PER-PLAYER,
+        bonus-threshold: BONUS-THRESHOLD,
+        bonus-multiplier: BONUS-MULTIPLIER,
+        allowed-token: (var-get allowed-token),
+        game-active: (var-get game-active),
+        contract-owner: (var-get contract-owner)
+    })
+)
