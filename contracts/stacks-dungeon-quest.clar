@@ -81,3 +81,127 @@
 (define-private (is-contract-owner)
     (is-eq tx-sender (var-get contract-owner))
 )
+
+(define-private (is-valid-token (token <token-trait>))
+    (is-eq (contract-of token) (var-get allowed-token))
+)
+
+(define-private (is-valid-principal (address principal))
+    (and 
+        (not (is-eq address (var-get contract-owner)))
+        (not (is-eq address tx-sender))
+        (not (is-eq address (as-contract tx-sender)))
+    )
+)
+
+(define-private (get-current-block)
+    stacks-block-height
+)
+
+(define-private (max-uint (a uint) (b uint))
+    (if (>= a b) a b)
+)
+
+(define-private (update-global-stats (stat-key (string-ascii 20)) (increment uint))
+    (let
+        (
+            (current-value (default-to u0 
+                (get value (map-get? game-stats { stat-type: stat-key }))
+            ))
+        )
+        (map-set game-stats 
+            { stat-type: stat-key }
+            { value: (+ current-value increment) }
+        )
+    )
+)
+
+(define-private (calculate-reward (player principal))
+    (let
+        (
+            (player-stats (default-to 
+                {
+                    last-dungeon-block: u0,
+                    last-entry-block: u0,
+                    total-dungeons-completed: u0, 
+                    total-rewards-earned: u0,
+                    is-in-dungeon: false,
+                    consecutive-completions: u0,
+                    highest-streak: u0
+                } 
+                (map-get? player-dungeon-stats { player: player })
+            ))
+            (base-reward REWARD-AMOUNT)
+            (completion-count (get total-dungeons-completed player-stats))
+        )
+        (if (>= completion-count BONUS-THRESHOLD)
+            (/ (* base-reward BONUS-MULTIPLIER) u100)
+            base-reward
+        )
+    )
+)
+
+;; PUBLIC GAME FUNCTIONS
+
+;; Enter the dungeon with comprehensive validation and fee collection
+(define-public (enter-dungeon (token <token-trait>) (player principal))
+    (let 
+        (
+            (player-balance (unwrap! (contract-call? token get-balance player) ERR-INSUFFICIENT-BALANCE))
+            (current-block (get-current-block))
+            (player-stats (default-to 
+                {
+                    last-dungeon-block: u0,
+                    last-entry-block: u0,
+                    total-dungeons-completed: u0, 
+                    total-rewards-earned: u0,
+                    is-in-dungeon: false,
+                    consecutive-completions: u0,
+                    highest-streak: u0
+                } 
+                (map-get? player-dungeon-stats { player: player })
+            ))
+        )
+        ;; Comprehensive validation checks
+        (asserts! (var-get game-active) ERR-GAME-INACTIVE)
+        (asserts! (is-eq tx-sender player) ERR-UNAUTHORIZED)
+        (asserts! (is-valid-token token) ERR-INVALID-TOKEN)
+        (asserts! (>= player-balance ENTRY-COST) ERR-INSUFFICIENT-BALANCE)
+        (asserts! (not (get is-in-dungeon player-stats)) ERR-UNAUTHORIZED)
+        (asserts! (< (get total-dungeons-completed player-stats) MAX-DUNGEONS-PER-PLAYER) ERR-MAX-DUNGEONS-REACHED)
+        
+        ;; Check cooldown period
+        (asserts! 
+            (>= current-block 
+                (+ (get last-entry-block player-stats) DUNGEON-COOLDOWN-BLOCKS)
+            ) 
+            ERR-DUNGEON-COOLDOWN
+        )
+
+        ;; Collect entry fee from player
+        (try! (contract-call? token transfer player (as-contract tx-sender) ENTRY-COST))
+
+        ;; Update contract treasury
+        (var-set contract-treasury (+ (var-get contract-treasury) ENTRY-COST))
+
+        ;; Update player stats - mark as entered dungeon
+        (map-set player-dungeon-stats 
+            { player: player }
+            {
+                last-dungeon-block: (get last-dungeon-block player-stats),
+                last-entry-block: current-block,
+                total-dungeons-completed: (get total-dungeons-completed player-stats),
+                total-rewards-earned: (get total-rewards-earned player-stats),
+                is-in-dungeon: true,
+                consecutive-completions: (get consecutive-completions player-stats),
+                highest-streak: (get highest-streak player-stats)
+            }
+        )
+
+        ;; Update global statistics
+        (update-global-stats "total-entries" u1)
+        (update-global-stats "fees-collected" ENTRY-COST)
+        
+        (ok true)
+    )
+)
