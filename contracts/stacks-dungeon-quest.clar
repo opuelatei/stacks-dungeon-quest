@@ -379,3 +379,84 @@
         contract-owner: (var-get contract-owner)
     })
 )
+
+;; Calculate potential reward for a player
+(define-read-only (get-potential-reward (player principal))
+    (ok (calculate-reward player))
+)
+
+;; ADMINISTRATIVE FUNCTIONS
+
+;; Toggle game active state
+(define-public (toggle-game-state)
+    (begin
+        (asserts! (is-contract-owner) ERR-NOT-CONTRACT-OWNER)
+        (var-set game-active (not (var-get game-active)))
+        (ok (var-get game-active))
+    )
+)
+
+;; Update the allowed token for the dungeon
+(define-public (set-allowed-token (new-token principal))
+    (begin
+        (asserts! (is-contract-owner) ERR-NOT-CONTRACT-OWNER)
+        (asserts! (not (is-eq new-token (var-get allowed-token))) ERR-INVALID-PRINCIPAL)
+        (var-set allowed-token new-token)
+        (ok true)
+    )
+)
+
+;; Emergency function to reset player dungeon state
+(define-public (emergency-reset-player (player principal))
+    (begin
+        (asserts! (is-contract-owner) ERR-NOT-CONTRACT-OWNER)
+        (asserts! (not (is-eq player (var-get contract-owner))) ERR-INVALID-PRINCIPAL)
+        (asserts! (not (is-eq player (as-contract tx-sender))) ERR-INVALID-PRINCIPAL)
+        (map-delete player-dungeon-stats { player: player })
+        (ok true)
+    )
+)
+
+;; Withdraw treasury funds (owner only)
+(define-public (withdraw-treasury (token <token-trait>) (amount uint))
+    (let
+        ((treasury-balance (var-get contract-treasury)))
+        (asserts! (is-contract-owner) ERR-NOT-CONTRACT-OWNER)
+        (asserts! (is-valid-token token) ERR-INVALID-TOKEN)
+        (asserts! (<= amount treasury-balance) ERR-INSUFFICIENT-BALANCE)
+        (asserts! (> amount u0) ERR-ZERO-AMOUNT)
+        
+        (try! (as-contract 
+            (contract-call? token transfer
+                tx-sender
+                (var-get contract-owner)
+                amount)
+        ))
+        
+        (var-set contract-treasury (- treasury-balance amount))
+        (ok true)
+    )
+)
+
+;; OWNERSHIP MANAGEMENT
+
+;; Initiate secure two-step ownership transfer
+(define-public (initiate-ownership-transfer (new-owner principal))
+    (begin
+        (asserts! (is-contract-owner) ERR-NOT-CONTRACT-OWNER)
+        (asserts! (is-valid-principal new-owner) ERR-INVALID-PRINCIPAL)
+        (var-set pending-owner (some new-owner))
+        (ok true)
+    )
+)
+
+;; Accept pending ownership transfer
+(define-public (accept-ownership)
+    (let 
+        ((pending (unwrap! (var-get pending-owner) ERR-PENDING-OWNER-ONLY)))
+        (asserts! (is-eq tx-sender pending) ERR-UNAUTHORIZED)
+        (var-set contract-owner pending)
+        (var-set pending-owner none)
+        (ok true)
+    )
+)
