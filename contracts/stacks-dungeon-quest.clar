@@ -460,3 +460,20 @@
         (ok true)
     )
 )
+
+;; Cancel pending ownership transfer
+(define-public (cancel-ownership-transfer)
+    (begin
+        (asserts! (is-contract-owner) ERR-NOT-CONTRACT-OWNER)
+        (var-set pending-owner none)
+        (ok true)
+    )
+)
+
+;; Get current and pending owner information
+(define-read-only (get-ownership-info)
+    (ok {
+        current-owner: (var-get contract-owner),
+        pending-owner: (var-get pending-owner)
+    })
+)
