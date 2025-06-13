@@ -205,3 +205,89 @@
         (ok true)
     )
 )
+
+;; Complete dungeon challenge and claim reward with bonus calculations
+(define-public (complete-dungeon (token <token-trait>) (player principal))
+    (let
+        (
+            (current-block (get-current-block))
+            (player-stats (unwrap! 
+                (map-get? player-dungeon-stats { player: player })
+                ERR-DUNGEON-NOT-ENTERED
+            ))
+            (reward-amount (calculate-reward player))
+            (new-consecutive (+ (get consecutive-completions player-stats) u1))
+            (new-highest-streak (max-uint (get highest-streak player-stats) new-consecutive))
+        )
+        ;; Validation checks
+        (asserts! (var-get game-active) ERR-GAME-INACTIVE)
+        (asserts! (is-eq tx-sender player) ERR-UNAUTHORIZED)
+        (asserts! (is-valid-token token) ERR-INVALID-TOKEN)
+        (asserts! (get is-in-dungeon player-stats) ERR-DUNGEON-NOT-ENTERED)
+        (asserts! (> reward-amount u0) ERR-ZERO-AMOUNT)
+
+        ;; Transfer reward tokens to player
+        (try! (as-contract 
+            (contract-call? token transfer
+                tx-sender
+                player
+                reward-amount)
+        ))
+
+        ;; Update player dungeon statistics with enhanced tracking
+        (map-set player-dungeon-stats 
+            { player: player }
+            {
+                last-dungeon-block: current-block,
+                last-entry-block: (get last-entry-block player-stats),
+                total-dungeons-completed: (+ (get total-dungeons-completed player-stats) u1),
+                total-rewards-earned: (+ (get total-rewards-earned player-stats) reward-amount),
+                is-in-dungeon: false,
+                consecutive-completions: new-consecutive,
+                highest-streak: new-highest-streak
+            }
+        )
+
+        ;; Update global statistics
+        (update-global-stats "total-completions" u1)
+        (update-global-stats "rewards-distributed" reward-amount)
+        (var-set total-dungeons-created (+ (var-get total-dungeons-created) u1))
+
+        (ok true)
+    )
+)
+
+;; Forfeit current dungeon (lose entry fee but reset state)
+(define-public (forfeit-dungeon (player principal))
+    (let
+        (
+            (player-stats (unwrap! 
+                (map-get? player-dungeon-stats { player: player })
+                ERR-DUNGEON-NOT-ENTERED
+            ))
+        )
+        ;; Validation checks
+        (asserts! (var-get game-active) ERR-GAME-INACTIVE)
+        (asserts! (is-eq tx-sender player) ERR-UNAUTHORIZED)
+        (asserts! (get is-in-dungeon player-stats) ERR-DUNGEON-NOT-ENTERED)
+
+        ;; Reset consecutive completions and exit dungeon
+        (map-set player-dungeon-stats 
+            { player: player }
+            {
+                last-dungeon-block: (get last-dungeon-block player-stats),
+                last-entry-block: (get last-entry-block player-stats),
+                total-dungeons-completed: (get total-dungeons-completed player-stats),
+                total-rewards-earned: (get total-rewards-earned player-stats),
+                is-in-dungeon: false,
+                consecutive-completions: u0,
+                highest-streak: (get highest-streak player-stats)
+            }
+        )
+
+        ;; Update global statistics
+        (update-global-stats "total-forfeits" u1)
+        
+        (ok true)
+    )
+)
